@@ -1,0 +1,617 @@
+---
+title: " Blood Pressure in NDNS"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  word_document:
+    toc: yes
+    fig_caption: yes
+  html_notebook: default
+  pdf_document: default
+---
+
+
+```{r library setup, message=FALSE, warning=FALSE, include=FALSE}
+library(haven)
+library(data.table)
+library(ggplot2)
+
+sav1 <- "UKDA-6533-spss/spss/spss25/ndns_rp_yr1-4a_personleveldietarydata_uk_v2.sav"
+sav2 <- "UKDA-6533-spss/spss/spss25/ndns_rp_yr1-4a_indiv_uk.sav"
+sav3 <- "UKDA-6533-spss/spss/spss25/ndns_yr1-3indiva_weights.sav"
+```
+
+####   What is the best model of Systolic and Diastolic Blood pressure in the NDNs dataset? And How should this influence policy?
+
+
+In a representative UK population (NDNS) what is the best model for understanding the relationship between diet and health, between intake of fundamental nutrients and blood pressure?
+
+## Introduction 
+
+Sodium is a key electrolyte in cellular physiology. One core function of the cell is to maintain a sodium concentration gradient across the cell wall.  Maintaining sodium levels is therefore an essential part of all higher organisms. This role is largely taken by the kidney and modified by receptors and hormones from across the organism. It also relies on ingestion and taste, or diet. 
+
+I would like to understand what to tell my patients. Current advice is to reduce sodium intake but it can be difficult to identify the best way to do this. Recent critiques of the role of ingested sodium in blood pressure have looked again at the best form for this advice.  The National dietary nutrition dataset is a rolling cross sectional study with linked data on ingestion of sodium and of blood pressure. It also contains data on potential confounding factors such as age sex weight race and income.
+
+Machine learning is a way of interrogating data sets to identify potential models to explain and predict an outcome. In this case the outcome is systolic or diastolic blood pressure.
+
+Causation analysis working with regression models can help to better identify the directional role of particular variables in a model. This helps to identify which variables to include in models and which combination is most likely to give a clinically significant answer.
+
+
+
+```{r read data, message=FALSE, warning=FALSE, include=FALSE}
+#savx <- "UKDA-6533-spss/spss/spss25/"
+
+sav1d <- read_sav(sav1)
+#View(sav1d)
+
+sav2d <- read_sav(sav2)
+#View(sav2d)
+
+#savxd <- read_sav(savx)
+ 
+sav3d <- read_sav(sav3)
+
+
+
+#yr1-4a person level dietary data_uk_v2 data
+persdat <- subset(sav1d[c("seriali","Age", "Sex","Country","Sodiummg","Calciummg","TotalEMJ")])
+sugarset <- subset(sav1d[c("seriali", "Totalsugarsg","Glucoseg","Sucroseg","Fructoseg","Lactoseg","SOFTDRINKSLOWCALORIE","SOFTDRINKSNOTLOWCALORIE", "TEACOFFEEANDWATER")])
+
+persdat <- as.data.table(persdat)
+sugarset <- as.data.table(sugarset)
+
+persdat[, Sex := factor(Sex, levels = 1:2, labels = c("Male", "Female"))]
+persdat[, Country := factor(Country)]
+
+#summary(persdat)
+#summary(sugarset)
+```
+
+
+
+
+```{r setup variables, message=FALSE, warning=FALSE, include=FALSE}
+ #measured and recorded data yr1-4a_indiv_uk 
+#subsets of the table to identify grouped information
+bpset <- subset(sav2d[c("seriali","Sys", "Dias", "Sys2", "Dias2","omsysval","omdiaval","CutIll")])
+ethnset <- subset(sav2d[c("seriali", "EthGrG","EthGrU" ,"ethgr5","ethgr2")])
+saltset <- subset(sav2d[c("seriali","SaltChk","SalHowC","SltSHow", "Na_mmol", "Na_mmol_Corrected" ,"Na_mmol_24h_4_10CLAIM", "Na_mmol_24h_4_10CLAIM_Corrected" )])
+medsset <- subset(sav2d[c("seriali", "bpmedc","bpmedd")])
+hypset <- subset(sav2d[c("seriali", "hyper140", "hibp140", "hyper1", "highbp1")])
+incset <- subset(sav2d[c("seriali","eqvinc","nssec8","hhinc")])
+measset <- subset(sav2d[c("seriali","htval","wtval","bmival")])
+ageset <- subset(sav2d[c("seriali","agegad1", "agegad2", "agegch1","agegr1","age")])
+```
+
+
+
+```{r rearrange, message=FALSE, warning=FALSE, include=FALSE}
+#change subsets to datatables  
+ bpset <- as.data.table(bpset)
+ saltset <- as.data.table(saltset)
+ medsset <- as.data.table(medsset)
+ hypset <- as.data.table(hypset)
+ ethnset <- as.data.table(ethnset)
+ incset <- as.data.table(incset)
+ measset <- as.data.table(measset)
+ ageset <- as.data.table(ageset)
+ 
+ #define factors 
+ #saltset
+ saltset[, SaltChk := factor(SaltChk, levels = 1:8, labels = c("Salt",
+	"Salt substitute",
+	"Neither",
+	"Item not applicable",
+	"No answer/refused",
+	"Don't know",
+	"Qn not applicable to survey year",
+	"Schedule not applicable"))]
+ saltset[, SalHowC := factor(SalHowC, levels = 1:8,labels = c("Always",
+"Usually",
+"Sometimes",
+	",Item not applicable",
+	"No answer/refused",
+	" Don't know",
+"Qn not applicable to survey year",
+"Schedule not applicable"))]
+ saltset[, SltSHow := factor(SltSHow,levels = 1:8,labels = c("Always",
+                                                            "Usually",
+                                                            "Sometimes",
+                                                            ",Item not applicable",
+                                                            "No answer/refused",
+                                                            " Don't know",
+                                                            "Qn not applicable to survey year",
+                                                            "Schedule not applicable"))]
+ 
+#medset
+  medsset[, bpmedc := factor(bpmedc)]
+ medsset[, bpmedd := factor(bpmedd)]
+ 
+ 
+
+
+ 
+ 
+ cutillcat <- c("Cancer (neoplasm) including lumps, masses, tumours and growths and benign (non-malignant) lumps and cysts"
+                ,"Diabetes. Incl. Hyperglycemia"
+                , "Other endocrine/metabolic"
+                ,"Mental illness/anxiety/depression/nerves (nes)"
+                ,"Mental handicap"
+                , "Epilepsy/fits/convulsions"
+                ,"Migraine/headaches
+                "," Other problems of nervous system
+                "," Cataract/poor eye sight/blindness
+                ","Other eye complaints
+                ","Poor hearing/deafness
+                ","Tinnitus/noises in the ear
+                ","Menieres disease/ear complaints causing balance problems
+"," Other ear complaints
+	"," Stroke/cerebral haemorrhage/cerebral thrombosis
+	","Heart attack/angina
+","Hypertension/high blood pressure/blood pressure (nes)
+	"," Other heart problems
+	","Piles/haemorrhoids incl. Varicose Veins in anus
+	"," Varicose veins/phlebitis in lower extremities
+","Other blood vessels/embolic
+	","Bronchitis/emphysema
+	","Asthma
+	"," Hayfever
+	","Other respiratory complaints
+	","Stomach ulcer/ulcer (nes)/abdominal hernia/rupture
+	","Other digestive complaints (stomach, liver, pancreas, bile ducts, small intestine)
+	","Complaints of bowel/colon (large intestine, caecum, bowel, colon, rectum)
+	","Complaints of teeth/mouth/tongue
+	","Kidney complaints
+	","Urinary tract infection
+	","Other bladder problems/incontinence
+	","Reproductive system disorders
+	","Arthritis/rheumatism/fibrositis
+	","Back problems/slipped disc/spine/neck
+","Other problems of bones/joints/muscles
+"," Infectious and parasitic disease
+","Disorders of blood and blood forming organs and immunity disorders
+	","Skin complaints
+	","Other complaints
+","Unclassifiable (no other codable complaint)
+	","Complaint no longer present
+","No answer/refused
+	","Dont know"
+                ,"Qn not applicable to survey year"
+                ,"Item not applicable")
+ 
+#incset
+  
+ hhinccat <- c("Under £5,000","
+	£5,000 - £9,999","
+	£10,000 - £14,999","
+	£15,000 - £19,999","
+	 £20,000 - £24,999","
+	 £25,000 - £29,999","
+	 £30,000 - £34,999","
+	 £35,000 - £39,999","
+	 £40,000 - £44,999","
+	£45,000 - £49,999","
+£50,000 - £74,999","
+	£75,000 - £99,999","
+£100,000 or more","
+	No answer/refused","
+	 Dont know","
+Qn not applicable to survey year","
+Item not applicable")
+ 
+ 
+#bpset 
+ bpset[, CutIll := factor(CutIll, levels = 1:46, labels = cutillcat)]
+ bpset[, "omsysval" := as.numeric(omsysval)]
+ bpset[,Sys := as.numeric(Sys)]
+
+ 
+#ethnset  
+ethnset[ , EthGrG := factor(EthGrG)]
+ethnset[ , EthGrU := factor(EthGrU)]
+ethnset[ , ethgr5 := factor(ethgr5, levels = 1:5, labels = c( 'White'
+                                                             , 'Mixed ethnic group'
+                                                             , 'Black or Black British'
+                                                             , 'Asian or asian British'
+                                                             , 'Any other group'))]
+ethnset[ , ethgr2 := factor(ethgr2, levels = 1:2, labels = c( 'White'
+                                                             , 'Non-white'))]
+
+#incset
+incset[ , nssec8 := factor(nssec8, levels = 1:9, labels = c(  "Higher managerial and professional occupations", "Lower managerial and professional occupations"
+               , "Intermediate occupations"
+                           , "Small employers and own account workers"
+                           , "Lower supervisory and technical occupations"
+                           , "Semi-routine occupations"
+                           , "Routine occupations"
+                           , "Never worked"
+                           , "Other"))]
+incset[ , hhinc := factor (hhinc, levels = 1:17,labels = hhinccat)]
+
+
+#ageset
+ageset[,agegad1 := factor(agegad1, levels = 1:4 ,labels = c("16-24","25-49","50-64","65+ years"))]
+ageset[,agegad2 := factor(agegad2, levels = 1:5, labels = c("16-18","19-34","35-49","50-64","65+ years"))]
+ageset[,agegch1 := factor(agegch1, levels = 1:3, labels = c("8-10","11-12","13-15"))]
+ageset[,agegr1 := factor(agegr1, levels = 1:5, labels = c("1.5-3 years","4-10 years","11-18 years","19-64 years","65+ years"))]
+ 
+#add columns for g equivalent of mmol for sodium
+saltset$Na_g_Corrected <- saltset$Na_mmol_Corrected/17.1
+saltset$Na_g <- saltset$Na_mmol/17.1
+saltset$Na_g_24h_4_10CLAIM <- saltset$Na_mmol_24h_4_10CLAIM/17.1
+saltset$Na_g_24h_4_10CLAIM_Corrected <- saltset$Na_mmol_24h_4_10CLAIM_Corrected/17.1
+
+
+
+ 
+```
+
+# literature
+
+The importance of sodium as the extracellular electrolyte was established by physiologists such as Guyton. They also demonstrated that sodium chloride infusion affected renal blood flow and blood pressure. 
+
+Pharmacologists working on hypertension have used diuretic drugs to reduce blood pressure. These increase renal excretion. Loop diuretics work on sodium in the loop of Henle. Spironolactone works to block the effect of the natural hormone aldosterone. Aldosterone is the active member of the renin- angiotensin hormone system which plays an important role in blood pressure regulation. The most widely used treatments for hypertension work on this system blocking the angiotensin converting enzyme.
+
+It is logical therefore that the role of sodium is important in managing blood pressure in everybody.
+
+National governments and WHO have recommended keeping oral intake below 2.3g. However daily sodium intake seems to have been increasing. 
+
+The NDNS time trend analysis showed changes in salt intake. Whilst BP measurements were made the results are not reported on in the paper. 
+
+It would be useful to understand if the predicted improvements in BP were found in the same population. 
+
+Then the meaning of these results needs to be understandable at the level of those able to implement policy. The NDNS population is structured to match the UK age and sex profile.  
+
+
+
+
+
+```{r data summary, echo=FALSE, message=FALSE, warning=FALSE}
+summary(bpset)
+summary(saltset)
+summary(medsset)
+summary(hypset)
+summary(ageset)
+
+#combine data from tables
+
+persugar <- merge(persdat,sugarset, by = "seriali")
+persethnsugar <- merge(ethnset , persugar, by = "seriali")
+incethsugar <- merge(persethnsugar, incset , by = "seriali")
+
+bpdietdat <- merge(persdat,bpset, by = "seriali" )
+medhypdat <- merge(medsset, hypset, by = "seriali")
+medbppers <- merge(medhypdat, bpset, by ="seriali")
+
+meaage <- merge(measset,ageset, by ="seriali" )
+meaages <- merge(meaage, saltset, by = "seriali")
+
+
+nearlyalldata <- merge(incethsugar, medbppers, by ="seriali")
+alldata <- merge(nearlyalldata, meaages, by ="seriali")
+
+alldatam <- alldata[Sex == "Male"]
+alldataf <- alldata[Sex == "Female"]
+
+
+alldata$nah20 <- (alldata$Sodiummg / alldata$TEACOFFEEANDWATER)
+
+summary(alldata$nah20)
+hist(alldata[,nah20])
+#View(alldata)
+
+```
+
+#method
+The NDNS is a postcode randomised survey which approaches approximately 1000 people each year. 
+The sample selects 500 adults and 500 children. The numbers are managed to deliver a representative sample for the UK. 
+
+These participants are asked some basic questions and if they agree to take part are given a 4 day dietary diary. The recorded intake is then analysed for intake by food. These foods have defined contents which can then be reduced to their elemental constituents.
+
+
+# the data
+
+```{r hist1, echo=FALSE, message=FALSE, warning=FALSE}
+ #View(bpset)
+#description of dataset 
+#bpset
+ 
+hist(incset[,eqvinc])
+hist(bpset[,Sys])
+bpset[, hist(Sys, prob = TRUE)] # histogram
+bpset[, curve(
+  dnorm(x, mean(Sys, na.rm = TRUE), sd(Sys, na.rm = TRUE)),
+  add = TRUE)] # superimpose a Normal distribution
+hist(bpset[,Sys2])
+hist(bpset[,Dias])
+hist(bpset[,Dias2])
+hist(saltset[,Na_g])
+hist(saltset[,Na_g_24h_4_10CLAIM_Corrected])
+hist(alldata[,nah20])
+#cutillgraph <- ggplot(bpset,aes(CutIll,Sys))+geom_col()
+#cutillgraph
+```
+
+
+
+
+
+
+```{r hist2, echo=FALSE, message=FALSE, warning=FALSE}
+hist(persdat[,Sodiummg])
+hist(persdat[,Calciummg])
+hist(alldata[,TotalEMJ])
+hist(alldata[,Totalsugarsg])
+hist(alldata[,wtval])
+
+hist(alldata[,bmival])
+
+
+dietnagraph <- ggplot(persdat, aes(Sex,Sodiummg))+ geom_boxplot()
+dietnagraph
+
+dietcagraph <- ggplot(persdat, aes(Sex,Calciummg))+ geom_boxplot()
+dietcagraph
+
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r graphs1, echo=FALSE, message=FALSE, warning=FALSE}
+
+#bpdietdatq <- subset(bpdietdat[,c("seriali","Age","Sodiummg","eqvinc","Sys", "Dias", "Sys2", "Dias2","omsysval","omdiaval")])
+#bpdietdatq <- bpdietdatq[,is.na(bpdietdat[Sys]) ]
+#View(bpdietdatq)
+#Summary(bpdietdatq)
+
+bpdietdat[, hist(Sodiummg, prob = TRUE)] # histogram
+bpdietdat[, curve(
+  dnorm(x, mean(Sodiummg, na.rm = TRUE), sd(Sodiummg, na.rm = TRUE)),
+  add = TRUE
+)] # superimpose a Normal distribution
+
+# graph section view the data
+#bpdietdat[Sex == "2" ,plot("Sodiummg","Sys")]
+graph1 <- ggplot(bpdietdat, aes(Sodiummg, Sys, colour = factor(Country)) ) + geom_smooth()
+graph1
+graph1a <- ggplot(bpdietdat, aes(Sodiummg, Sys, colour = factor(Sex)) )+ geom_smooth()
+graph1a
+
+graph1b <- ggplot(alldata, aes(Sodiummg, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graph1b
+
+graph1bm <- ggplot(alldatam, aes(Sodiummg, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graph1bm
+
+graph1bf <- ggplot(alldataf, aes(Sodiummg, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graph1bf
+
+
+graph1bd <- ggplot(alldata, aes(Sodiummg, Dias, colour = factor(agegad1)) ) + geom_smooth()
+graph1bd
+
+graph1c <- ggplot(alldata, aes(Sodiummg, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graph1c
+
+graph1bm <- ggplot(alldatam, aes(Sodiummg, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graph1bm
+
+graph1bf <- ggplot(alldataf, aes(Sodiummg, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graph1bf
+
+graph1cd <- ggplot(alldata, aes(Sodiummg, Dias, colour = factor(agegad2)) ) + geom_smooth()
+graph1cd
+
+
+```
+
+# results
+
+```{r graphs2, echo=FALSE, message=FALSE, warning=FALSE}
+#bpdietdatq <- subset(bpdietdat[,c("seriali","Age","Sodiummg","eqvinc","Sys", "Dias", "Sys2", "Dias2","omsysval","omdiaval")])
+#bpdietdatq <- bpdietdatq[,is.na(bpdietdat[Sys]) ]
+#View(bpdietdatq)
+#Summary(bpdietdatq)
+
+alldata[, hist(wtval, prob = TRUE)] # histogram
+alldata[, curve(
+  dnorm(x, mean(wtval, na.rm = TRUE), sd(wtval, na.rm = TRUE)),
+  add = TRUE
+)] # superimpose a Normal distribution
+
+# graph section view the data
+#bpdietdat[Sex == "2" ,plot("Sodiummg","Sys")]
+graphw1 <- ggplot(alldata, aes(wtval, Sys, colour = factor(Country)) ) + geom_smooth()
+graphw1
+graphw1a <- ggplot(alldata, aes(wtval, Sys, colour = factor(Sex)) )+ geom_smooth()
+graphw1a
+
+graph1wb <- ggplot(alldata, aes(wtval, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graph1wb
+
+graphw1bm <- ggplot(alldatam, aes(wtval, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graphw1bm
+
+graphw1bf <- ggplot(alldataf, aes(wtval, Sys, colour = factor(agegad1)) ) + geom_smooth()
+graphw1bf
+
+
+graphw1bd <- ggplot(alldata, aes(wtval, Dias, colour = factor(agegad1)) ) + geom_smooth()
+graphw1bd
+
+graphw1c <- ggplot(alldata, aes(wtval, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graphw1c
+
+graphw1bm <- ggplot(alldatam, aes(wtval, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graphw1bm
+
+graphw1bf <- ggplot(alldataf, aes(wtval, Sys, colour = factor(agegad2)) ) + geom_smooth()
+graphw1bf
+
+graphw1cd <- ggplot(alldata, aes(wtval, Dias, colour = factor(agegad2)) ) + geom_smooth()
+graphw1cd
+```
+
+
+
+
+
+
+
+```{r graphs3, echo=FALSE, message=FALSE, warning=FALSE}
+
+graph2 <- ggplot(alldatam, aes(Age, Sodiummg, colour = factor(Sex)) )+ geom_smooth()
+graph2
+
+graph2a <- ggplot(alldatam, aes(Age, Sys) ) + geom_smooth()
+graph2a
+
+graph2b <- ggplot(alldatam, aes(Age, Dias) ) + geom_smooth()
+graph2b
+
+#graph3 <- ggplot(alldatam, aes(Sodiummg, eqvinc) )+ geom_smooth()
+#graph3
+
+#graph4 <- ggplot(alldatam, aes(Sys, eqvinc) ) +geom_smooth()
+#graph4
+
+
+
+#show persugstat
+
+graph5 <- ggplot(alldatam, aes(Age, Fructoseg)) + geom_smooth()
+graph5
+
+
+#show ethnsugar
+
+graph6 <- ggplot(alldatam, aes (Age , Fructoseg, colour = ethgr2))+geom_col()
+graph6
+
+```
+
+
+
+```{r statspart1, echo=FALSE, message=FALSE, warning=FALSE}
+# statistical analysis section 
+
+# comparison tables
+
+incethtbl <- alldata[,table(nssec8, ethgr2)]
+incethtbl
+
+incethtbl2 <- alldata[,table(nssec8, ethgr5)]
+incethtbl2
+
+agetbl1 <-alldata[,table(agegr1,Sex)]
+agetbl1
+
+
+
+
+#how many are on bp medication ? 
+medstbl1 <- alldata[ , table(bpmedc,bpmedd)]
+medstbl1
+
+hyptabl1 <- alldata[,table(hibp140, bpmedc)]
+hyptabl1
+
+hyptabl2 <- alldata[,table(hyper1, bpmedc)]
+hyptabl2
+
+hyptabl3 <- alldata[,table(hyper140, bpmedc)]
+hyptabl3
+
+hyptabl4 <- alldata[,table(highbp1, bpmedc)]
+hyptabl4
+```
+
+# analysis
+
+
+```{r analysis1, echo=FALSE}
+#random correlations
+
+meds <- t.test(medstbl1 ,  na.rm = TRUE)
+
+incSys <-  t.test( hyptabl1,  na.rm = TRUE)
+incSys
+meds
+
+
+
+
+#linear regression models
+lm1 <- lm(Sys ~ agegad2 + Sex +Sodiummg + Calciummg + Fructoseg + eqvinc + ethgr2 +TotalEMJ +wtval + bpmedd, alldata)
+summary(lm1)
+plot(lm1)
+
+lm1m <- lm(Sys ~ agegad2  +Sodiummg + Calciummg + Fructoseg + eqvinc + ethgr2 +TotalEMJ +wtval + bpmedd, alldatam)
+summary(lm1m)
+plot(lm1m)
+
+lm1f <- lm(Sys ~ agegad2  +Sodiummg + Calciummg + Fructoseg + eqvinc + ethgr2 +TotalEMJ +wtval + bpmedd, alldataf)
+summary(lm1f)
+plot(lm1f)
+
+
+lmD1 <- lm(Dias ~ agegad2 + Sex +Sodiummg + Calciummg + Fructoseg + eqvinc + ethgr2 +TotalEMJ +wtval + bpmedd, alldata)
+summary(lmD1)
+
+lm2 <- lm(Sys ~ Na_g_Corrected + Sex + age + TEACOFFEEANDWATER, alldata)
+summary(lm2)
+plot(lm2)
+
+lmD2 <- lm(Dias ~ Na_g_Corrected + Sex + age + TEACOFFEEANDWATER, alldata)
+summary(lmD2)
+```
+
+
+
+
+```{r mach1, echo=TRUE}
+library(caret)
+set.seed(42)
+
+alldataSys <- alldata[!is.na(alldata$Sys),]
+alldataSys <- as.data.frame(alldataSys)
+simplealldata <- subset(alldataSys[c("Sys", "Age","wtval","Sex")])
+
+                      
+modelSys <- train(Sys ~ ., simplealldata,
+               method = "lm",
+               trControl = trainControl(method = "cv",
+                                        number = 10,
+                                        verboseIter = TRUE), na.action = na.pass)
+modelSys
+
+```
+
+```{r mach2, echo=TRUE}
+p <- predict(modelSys, simplealldata)
+error <- p - simplealldata$Sys
+rmse_xval <- sqrt(mean(error^2)) ## xval RMSE
+rmse_xval
+```
+
+#discussion
+
+The dataset shows that sodium intake is related to systolic blood pressure in particular age groups of men. There is much less of a relationship in women. 
+
+These relationships are different in different age groups. 
+
+The data support consideration of a more complex approach to preventing blood pressure. 
+The simplest message for avoidance is to loose weight. Changing age and Sex are more complex. 
+Salt reduction is an issue for men between 16 and 50, but even here it is more important to maintain a healthy weight than to reduce sodium intake. 
+This may be due to the bodies ability to auto regulate sodium to much higher levels than oral intake allows. 
+
+
